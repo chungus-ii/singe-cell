@@ -25,6 +25,7 @@ def init_weights(m):
         nn.init.xavier_uniform_(m.weight)
 
 
+# Not implemented yet, just the dataset, dataloader, and training loop set up
 def train_compound_encoder():
     compound_dataset = CompoundEncoderDataset(device=device)
     compound_dataloader = DataLoader(
@@ -51,6 +52,9 @@ def train_compound_encoder():
             print(epoch)
 
 
+# Old code that trained a model on 614 samples, having the model indirectly learn the information
+# given by the NK and T samples instead of explicitly using it.
+# Didn't really make sense, but I left this here for now.
 def train():
     (
         cell_types,
