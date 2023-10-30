@@ -1,170 +1,199 @@
 from rdkit import Chem
-from rdkit.Chem import AllChem
+from torch_geometric.data import Data, Batch
+import torch
+from torch.utils.data import Dataset, DataLoader
 import pandas as pd
 import numpy as np
 import os
+import matplotlib.pyplot as plt
 
-
-max_tokens = 121
+MAX_TOKENS = 121
 PAD_TOKEN = 33
 
-def getParquetData(BASE_PATH = "data/de_train.parquet"):
+
+def getParquetData(BASE_PATH="data/de_train.parquet"):
     # Read cell_type, SMILES, and gene (target) data from de_train.parquet
     print("Loading Data...")
     ABSOLUTE_PATH = os.path.join(os.path.dirname(__file__), BASE_PATH)
-    data = pd.read_parquet(ABSOLUTE_PATH, engine='fastparquet')
-    cell_types = np.squeeze(data.loc[:, ['cell_type']].to_numpy())
-    smiles = np.squeeze(data.loc[:, ['SMILES']].to_numpy())
+    data = pd.read_parquet(ABSOLUTE_PATH, engine="fastparquet")
+    cell_types = np.squeeze(data.loc[:, ["cell_type"]].to_numpy())
+    smiles = np.squeeze(data.loc[:, ["SMILES"]].to_numpy())
     targets = data.iloc[:, 5:18216].to_numpy()
-    
+
     # Collect information from compounds, map cell types to integers, and tokenize SMILES
     print("Collecting Features...")
     type_to_num_vect = np.vectorize(type_to_num)
     cell_types = type_to_num_vect(cell_types)
     compound_adjacency_matrices = np.array(smiles_to_adjacency(smiles))
     compound_atom_features = np.array(smiles_to_atom_features(smiles))
-    smiles_tokens = np.array([smiles_to_indices(smiles_string) for smiles_string in smiles])
-    return cell_types, compound_adjacency_matrices, compound_atom_features, smiles_tokens, targets
+    smiles_tokens = np.array(
+        [smiles_to_indices(smiles_string) for smiles_string in smiles]
+    )
+    return (
+        cell_types,
+        compound_adjacency_matrices,
+        compound_atom_features,
+        smiles_tokens,
+        targets,
+    )
+
+
+class CompoundEncoderDataset(Dataset):
+    def __init__(self, BASE_PATH="data/de_train.parquet", device=torch.device("mps")):
+        ABSOLUTE_PATH = os.path.join(os.path.dirname(__file__), BASE_PATH)
+        data = pd.read_parquet(ABSOLUTE_PATH, engine="fastparquet")
+        smiles = list(set(data["SMILES"].tolist()))  # Removes duplicates
+        graphs = smiles_to_graph(smiles, device=device)
+        tokens = smiles_to_indices(smiles, device=device)
+        self.data = list(zip(graphs, tokens))
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        return self.data[idx]
+
+
+def compound_collate_fn(list_of_tuples):
+    """
+    Parameters:
+    list_of_tuples: list of tuples of (Pyg Graph, Tokens List)
+
+    Output: Pyg Graph Batch, Batched Tokens Tensor
+    """
+    two_lists = list(map(list, zip(*list_of_tuples)))
+    batched_graphs = Batch.from_data_list(two_lists[0])
+    batched_tokens = torch.stack(two_lists[1])
+    return batched_graphs, batched_tokens
 
 
 def type_to_num(cell_type):
-    match cell_type:
-        case "NK cells":
-            return 0
-        case "T cells CD4+":
-            return 1
-        case "T cells CD8+":
-            return 2
-        case "T regulatory cells":
-            return 3
-        case "B cells":
-            return 4
-        case "Myeloid cells":
-            return 5
+    CELL_TYPE_MAP = {
+        "NK cells": 0,
+        "T cells CD4+": 1,
+        "T cells CD8+": 2,
+        "T regulatory cells": 3,
+        "B cells": 4,
+        "Myeloid cells": 5,
+    }
+    return CELL_TYPE_MAP[cell_type]
 
 
-def smiles_to_adjacency(smiles_stack, max_atoms=max_tokens):
-    adj_list = []
+def smiles_to_graph(smiles_list, device):
+    NODE_FEATURE_MAP = {
+        "atomic_num": list(range(0, 119)),
+        "chirality": [
+            "CHI_UNSPECIFIED",
+            "CHI_TETRAHEDRAL_CW",
+            "CHI_TETRAHEDRAL_CCW",
+            "CHI_OTHER",
+            "CHI_TETRAHEDRAL",
+            "CHI_ALLENE",
+            "CHI_SQUAREPLANAR",
+            "CHI_TRIGONALBIPYRAMIDAL",
+            "CHI_OCTAHEDRAL",
+        ],
+        "degree": list(range(0, 11)),
+        "formal_charge": list(range(-5, 7)),
+        "num_hs": list(range(0, 9)),
+        "num_radical_electrons": list(range(0, 5)),
+        "hybridization": [
+            "UNSPECIFIED",
+            "S",
+            "SP",
+            "SP2",
+            "SP3",
+            "SP3D",
+            "SP3D2",
+            "OTHER",
+        ],
+        "is_aromatic": [False, True],
+        "is_in_ring": [False, True],
+    }
 
-    for smiles in smiles_stack:
+    EDGE_FEATURE_MAP = {
+        "bond_type": [
+            "UNSPECIFIED",
+            "SINGLE",
+            "DOUBLE",
+            "TRIPLE",
+            "QUADRUPLE",
+            "QUINTUPLE",
+            "HEXTUPLE",
+            "ONEANDAHALF",
+            "TWOANDAHALF",
+            "THREEANDAHALF",
+            "FOURANDAHALF",
+            "FIVEANDAHALF",
+            "AROMATIC",
+            "IONIC",
+            "HYDROGEN",
+            "THREECENTER",
+            "DATIVEONE",
+            "DATIVE",
+            "DATIVEL",
+            "DATIVER",
+            "OTHER",
+            "ZERO",
+        ],
+        "stereo": [
+            "STEREONONE",
+            "STEREOANY",
+            "STEREOZ",
+            "STEREOE",
+            "STEREOCIS",
+            "STEREOTRANS",
+        ],
+        "is_conjugated": [False, True],
+    }
+
+    graph_list = []
+
+    for smiles in smiles_list:
         mol = Chem.MolFromSmiles(smiles)
-        adjacency = None
-        # Get the number of atoms in the molecule
-        num_atoms = mol.GetNumAtoms()
 
-        # Optionally, limit the number of atoms (pad if fewer, truncate if more)
-        if max_atoms is not None:
-            if num_atoms <= max_atoms:
-                # Pad with zeros
-                adjacency = np.zeros((max_atoms, max_atoms), dtype=np.float32)
-            else:
-                # Truncate extra atoms
-                adjacency = np.zeros((max_atoms, max_atoms), dtype=np.float32)
-                mol = Chem.Mol(mol.ToBinary()[:Chem.MolToBinary(mol).rindex(b'\x00' * 4) + 4])
-
-        # Create an empty adjacency matrix
-        else:
-            adjacency = np.zeros((num_atoms, num_atoms), dtype=np.float32)
-
-        # Iterate through bonds and fill the adjacency matrix
-        for bond in mol.GetBonds():
-            start, end = bond.GetBeginAtomIdx(), bond.GetEndAtomIdx()
-            bond_type = bond.GetBondTypeAsDouble()  # Get bond type as float (e.g., 1.0 for single bond, 2.0 for double)
-            adjacency[start, end] = bond_type
-            adjacency[end, start] = bond_type  # Assuming the graph is undirected
-
-        adj_list.append(adjacency)
-
-    return adj_list
-
-
-
-def smiles_to_atom_features(smiles_stack, max_atoms=max_tokens):
-    features_list = []
-
-    for smiles in smiles_stack:
-        mol = Chem.MolFromSmiles(smiles)
-        atom_features = []
-
-        # Define mapping dictionaries for non-numeric features
-        HYBRIDIZATION_MAP = {
-            Chem.rdchem.HybridizationType.SP: 0,
-            Chem.rdchem.HybridizationType.SP2: 1,
-            Chem.rdchem.HybridizationType.SP3: 2,
-            Chem.rdchem.HybridizationType.SP3D: 3,
-            Chem.rdchem.HybridizationType.SP3D2: 4,
-        }
-
-        CHIRALITY_MAP = {
-            Chem.ChiralType.CHI_UNSPECIFIED: 0,
-            Chem.ChiralType.CHI_TETRAHEDRAL_CW: 1,
-            Chem.ChiralType.CHI_TETRAHEDRAL_CCW: 2,
-        }
-
-        BOND_TYPE_MAP = {
-            Chem.rdchem.BondType.SINGLE: 0,
-            Chem.rdchem.BondType.DOUBLE: 1,
-            Chem.rdchem.BondType.TRIPLE: 2,
-            Chem.rdchem.BondType.AROMATIC: 3,
-        }
-
-        def bond_type_to_one_hot(bond_types):
-            num_bond_types = len(BOND_TYPE_MAP)
-            one_hot_encoding = [0] * num_bond_types
-            for bond_type in bond_types:
-                if bond_type in BOND_TYPE_MAP:
-                    one_hot_encoding[BOND_TYPE_MAP[bond_type]] = 1
-                else:
-                    raise Exception(f"bond type: {bond_type} not accounted for in mapping")
-            return one_hot_encoding
-        
-        # Iterate through atoms and extract atom information
+        xs = []
         for atom in mol.GetAtoms():
-            # Extract atom features as a list
-            atomic_number = atom.GetAtomicNum()
-            atomic_mass = atom.GetMass()
-            valence_electrons = atom.GetTotalValence()
-            implicit_valence = atom.GetImplicitValence()
-            hydrogens = atom.GetTotalNumHs()
-            hybridization = HYBRIDIZATION_MAP.get(atom.GetHybridization(), -1)  # Map to numerical value
-            chirality = CHIRALITY_MAP.get(atom.GetChiralTag(), -1)  # Map to numerical value
-            formal_charge = atom.GetFormalCharge()
-            neighbors = len(atom.GetNeighbors())
-            
-            # Extract bond types and convert them to one-hot encoding
-            bond_types = [bond.GetBondType() for bond in atom.GetBonds()]
-            bond_type_encoding = bond_type_to_one_hot(bond_types)
-            
-            functional_groups = atom.GetNumRadicalElectrons()
-            ring_membership = [int(atom.IsInRing()), len(Chem.GetSymmSSSR(mol))]
-            aromaticity = int(atom.GetIsAromatic())
-            degree = atom.GetDegree()
-            clustering_coefficient = AllChem.CalcCrippenDescriptors(mol)[0]
-            
-            # Append atom features as a list
-            atom_feature = [atomic_number, atomic_mass, valence_electrons, implicit_valence, hydrogens, hybridization, chirality, 
-                            formal_charge, neighbors] + bond_type_encoding + [functional_groups] + ring_membership + [aromaticity,
-                            degree, clustering_coefficient]
-            atom_features.append(atom_feature)
-        
-        # Pad or truncate features matrix based on max_atoms
-        if max_atoms is not None:
-            num_atoms = len(atom_features)
-            if num_atoms < max_atoms:
-                # Pad with zeros
-                pad_size = max_atoms - num_atoms
-                padding = [[PAD_TOKEN] * len(atom_features[0])] * pad_size
-                atom_features.extend(padding)
-            elif num_atoms > max_atoms:
-                # Truncate extra atoms
-                atom_features = atom_features[:max_atoms]
-        
-        features_list.append(atom_features)
+            x = []
+            x.append(NODE_FEATURE_MAP["atomic_num"].index(atom.GetAtomicNum()))
+            x.append(NODE_FEATURE_MAP["chirality"].index(str(atom.GetChiralTag())))
+            x.append(NODE_FEATURE_MAP["degree"].index(atom.GetTotalDegree()))
+            x.append(NODE_FEATURE_MAP["formal_charge"].index(atom.GetFormalCharge()))
+            x.append(NODE_FEATURE_MAP["num_hs"].index(atom.GetTotalNumHs()))
+            x.append(
+                NODE_FEATURE_MAP["num_radical_electrons"].index(
+                    atom.GetNumRadicalElectrons()
+                )
+            )
+            x.append(
+                NODE_FEATURE_MAP["hybridization"].index(str(atom.GetHybridization()))
+            )
+            x.append(NODE_FEATURE_MAP["is_aromatic"].index(atom.GetIsAromatic()))
+            x.append(NODE_FEATURE_MAP["is_in_ring"].index(atom.IsInRing()))
+            xs.append(x)
+        x = torch.tensor(xs, dtype=torch.float32).view(-1, 9)
 
-    return features_list
+        edge_indices, edge_attrs = [], []
+        for bond in mol.GetBonds():
+            i = bond.GetBeginAtomIdx()
+            j = bond.GetEndAtomIdx()
+            e = []
+            e.append(EDGE_FEATURE_MAP["bond_type"].index(str(bond.GetBondType())))
+            e.append(EDGE_FEATURE_MAP["stereo"].index(str(bond.GetStereo())))
+            e.append(EDGE_FEATURE_MAP["is_conjugated"].index(bond.GetIsConjugated()))
+            edge_indices += [[i, j], [j, i]]
+            edge_attrs += [e, e]
+        edge_index = torch.tensor(edge_indices)
+        edge_index = edge_index.t().to(torch.long).view(2, -1)
+        edge_attr = torch.tensor(edge_attrs, dtype=torch.float32).view(-1, 3)
+        perm = (edge_index[0] * x.size(0) + edge_index[1]).argsort()
+        edge_index, edge_attr = edge_index[:, perm], edge_attr[perm]
+
+        graph_list.append(Data(x=x, edge_index=edge_index, edge_attr=edge_attr, device=device))
+    return graph_list
 
 
-def smiles_to_indices(smiles_string):
+def smiles_to_indices(smiles_stack, device, max_tokens=MAX_TOKENS):
     CUSTOM_TOKENS = {
         "C": 0,
         "c": 1,
@@ -198,25 +227,53 @@ def smiles_to_indices(smiles_string):
         "4": 29,
         "5": 30,
         "6": 31,
-        "7": 32
+        "7": 32,
     }
-    tokens = []
-    i = 0
-    while i < len(smiles_string):
-        # Check for two character tokens (Br, Cl, @@)
-        if smiles_string[i:i + 2] in CUSTOM_TOKENS:
-            tokens.append(CUSTOM_TOKENS[smiles_string[i:i + 2]])
-            i += 2
-        # Check for single-character tokens
-        elif smiles_string[i] in CUSTOM_TOKENS:
-            tokens.append(CUSTOM_TOKENS[smiles_string[i]])
-            i += 1
-        else:
-            raise ValueError(f"Invalid atom: {smiles_string[i]}")
-    tokens += [PAD_TOKEN] * (max_tokens - len(tokens))
-    return tokens
+    smiles_tokens = []
+    for smiles_string in smiles_stack:
+        tokens = []
+        i = 0
+        while i < len(smiles_string):
+            # Check for two character tokens (Br, Cl, @@)
+            if smiles_string[i : i + 2] in CUSTOM_TOKENS:
+                tokens.append(CUSTOM_TOKENS[smiles_string[i : i + 2]])
+                i += 2
+            # Check for single-character tokens
+            elif smiles_string[i] in CUSTOM_TOKENS:
+                tokens.append(CUSTOM_TOKENS[smiles_string[i]])
+                i += 1
+            else:
+                raise ValueError(f"Invalid atom: {smiles_string[i]}")
+        tokens += [PAD_TOKEN] * (max_tokens - len(tokens))
+        smiles_tokens.append(torch.as_tensor(tokens, device=device))
+    return smiles_tokens
+
+
+def observe_data(BASE_PATH="data/de_train.parquet"):
+    """
+    Plots the difference in gene expression between different cell types. Made for
+    the purpose of seeing how the effects on cell types we have data for
+    (NK cells, T cells CD4+, T cells CD8+, and T regulatory cells) can be used
+    to predict the effects on B cells and Myeloid cells.
+    """
+    ABSOLUTE_PATH = os.path.join(os.path.dirname(__file__), BASE_PATH)
+    data = pd.read_parquet(ABSOLUTE_PATH, engine="fastparquet")
+    bcell_rows = data.loc[data["cell_type"] == "B cells"]
+    x_axis = np.arange(18211)
+    for _, row in bcell_rows.iterrows():
+        figure, axis = plt.subplots(2, 3, sharex=True, sharey=True)
+        same_compound = data.loc[data["sm_name"] == row["sm_name"]].reset_index()
+        for i, cell in same_compound.iterrows():
+            y_axis = cell.iloc[5:18216].to_numpy()
+            a, b = i % 2, int(i / 2)
+            axis[a, b].plot(x_axis, y_axis)
+            axis[a, b].set_xlabel("18,211 Cell Types")
+            axis[a, b].set_ylabel("18,211 Cell Types")
+            axis[a, b].set_title(cell["cell_type"])
+        # plt.title(row["sm_name"])
+        plt.rcParams["figure.figsize"] = (12, 8)
+        plt.show()
 
 
 if __name__ == "__main__":
-    cell_types, compound_adjacency_matrices, compound_atom_features, smiles_tokens, targets = getParquetData()
-    print(compound_atom_features.shape)
+    observe_data()
