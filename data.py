@@ -1,11 +1,14 @@
+import os
+import pandas as pd
+import numpy as np
 from rdkit import Chem
 from torch_geometric.data import Data, Batch
 import torch
 from torch.utils.data import Dataset, DataLoader
-import pandas as pd
-import numpy as np
-import os
 import matplotlib.pyplot as plt
+import seaborn as sns
+import umap
+from sklearn.manifold import TSNE
 
 MAX_TOKENS = 121
 PAD_TOKEN = 33
@@ -189,7 +192,9 @@ def smiles_to_graph(smiles_list, device):
         perm = (edge_index[0] * x.size(0) + edge_index[1]).argsort()
         edge_index, edge_attr = edge_index[:, perm], edge_attr[perm]
 
-        graph_list.append(Data(x=x, edge_index=edge_index, edge_attr=edge_attr, device=device))
+        graph_list.append(
+            Data(x=x, edge_index=edge_index, edge_attr=edge_attr, device=device)
+        )
     return graph_list
 
 
@@ -275,5 +280,201 @@ def observe_data(BASE_PATH="data/de_train.parquet"):
         plt.show()
 
 
+def cell_correlation_heatmaps(BASE_PATH="data/de_train.parquet", sortby="cell_type"):
+    ABSOLUTE_PATH = os.path.join(os.path.dirname(__file__), BASE_PATH)
+    data = pd.read_parquet(ABSOLUTE_PATH, engine="fastparquet")
+    # sort by cell type
+    data.sort_values(by=sortby, inplace=True)
+    # gene expression data for each cell
+    single_cell_vectors = data.iloc[:, 5:18216].to_numpy()
+    # correlation between vectors is the cosine between them
+    dot_products = single_cell_vectors @ single_cell_vectors.T
+    norms = np.sqrt(np.sum(single_cell_vectors**2, axis=1))
+    corr_mat = dot_products / (norms[:, np.newaxis] * norms[np.newaxis, :])
+    # create string maps for readability
+    compounds = list(dict.fromkeys(data["sm_name"].tolist()))
+    COMPOUND_MAP = {name: compounds.index(name) for name in compounds}
+    CELL_MAP = {
+        "B cells": "B",
+        "Myeloid cells": "M",
+        "NK cells": "NK",
+        "T cells CD8+": "T8",
+        "T cells CD4+": "T4",
+        "T regulatory cells": "TR",
+    }
+    # create column/row labels
+    labels = []
+    for _, row in data.iterrows():
+        compound, cell_type = COMPOUND_MAP[row["sm_name"]], CELL_MAP[row["cell_type"]]
+        labels.append(f"{compound}: {cell_type}")
+    # dataframe with columns and rows
+    corr_df = pd.DataFrame(data=corr_mat, index=labels, columns=labels)
+    print(corr_df)
+    # mask upper half (correlation matrix is symmetric)
+    mask = np.zeros_like(corr_mat, dtype=bool)
+    mask[np.triu_indices_from(mask)] = True
+    sns.heatmap(corr_df, mask=mask, square=True)
+    sns.set(font_scale=0.1)
+    plt.show()
+
+
+def gene_correlation_heatmaps(BASE_PATH="data/de_train.parquet"):
+    ABSOLUTE_PATH = os.path.join(os.path.dirname(__file__), BASE_PATH)
+    data = pd.read_parquet(ABSOLUTE_PATH, engine="fastparquet")
+    # each vector representing an individual gene
+    single_gene_vectors = data.iloc[:, 5:18216].to_numpy().T
+    # correlation between vectors is the cosine between them
+    # TODO: do on GPU with torch
+    # (18211,614)x(614,18211)=(18211,18211) this is really slow right now
+    dot_products = single_gene_vectors @ single_gene_vectors.T
+    norms = np.sqrt(np.sum(single_gene_vectors**2, axis=1))
+    corr_mat = dot_products / (norms[:, np.newaxis] * norms[np.newaxis, :])
+    # mask upper half (correlation matrix is symmetric)
+    mask = np.zeros_like(corr_mat, dtype=bool)
+    mask[np.triu_indices_from(mask)] = True
+    sns.heatmap(corr_mat, mask=mask, square=True, xticklabels=False, yticklabels=False)
+    sns.set(font_scale=0.1)
+    plt.show()
+
+
+def arrows(data, embedding):
+    # iterating through b cells
+    bcell_rows = data.loc[data["cell_type"] == "B cells"]
+    for _, bcell in bcell_rows.iterrows():
+        # certain compound of this b cell
+        compound = bcell["sm_name"]
+        # all other cells with the same compound
+        cells = data.loc[data["sm_name"] == compound]
+        # myeloid cell with this compound
+        myeloid = cells.loc[cells["cell_type"] == "Myeloid cells"]
+        # embedding coordinates of b cell and myeloid cell
+        bcell_coords = embedding[bcell.values[-1], :]
+        myeloid_coords = embedding[myeloid.values[0][-1], :]
+        # iterating through all cells of this compound
+        for _, compound_cell in cells.iterrows():
+            # only draw arrows from non b/myeloid cells
+            if compound_cell["cell_type"] not in ["Myeloid cells", "B cells"]:
+                # collect embedding coordinates of cell
+                index = compound_cell.values[-1]
+                x, y = embedding[index, 0], embedding[index, 1]
+
+                dx_b, dy_b = bcell_coords[0] - x, bcell_coords[1] - y
+                dx_m, dy_m = myeloid_coords[0] - x, myeloid_coords[1] - y
+
+                plt.arrow(x, y, dx_b, dy_b, width=0.00001)
+                plt.arrow(x, y, dx_m, dy_m, width=0.00001)
+
+
+def umap_cells(metric, BASE_PATH="data/de_train.parquet", arrows=False):
+    ABSOLUTE_PATH = os.path.join(os.path.dirname(__file__), BASE_PATH)
+    data = pd.read_parquet(ABSOLUTE_PATH, engine="fastparquet")
+    data = data.sort_values(by="cell_type").reset_index(drop=True)
+    data["index1"] = data.index
+    # gene expression data for each cell
+    single_cell_vectors = data.iloc[:, 5:18216].to_numpy()
+    embedding = umap.UMAP(n_components=2, metric=metric).fit_transform(single_cell_vectors)
+    # plot UMAP embedding colored by cell type
+    plt.scatter(
+        embedding[:, 0],
+        embedding[:, 1],
+        c=[
+            sns.color_palette("Dark2")[int(x)]
+            for x in data.cell_type.map(
+                {
+                    "NK cells": 5,
+                    "T cells CD4+": 4,
+                    "T cells CD8+": 3,
+                    "T regulatory cells": 2,
+                    "B cells": 1,
+                    "Myeloid cells": 0,
+                }
+            )
+        ],
+    )
+
+    # draw arrows pointing to b cells and myeloid cells from other cell types
+    if arrows:
+        arrows(data, ebedding)
+
+    plt.show()
+
+
+def tsne_cells(metric, perplexity=30, BASE_PATH="data/de_train.parquet", arrows=False):
+    ABSOLUTE_PATH = os.path.join(os.path.dirname(__file__), BASE_PATH)
+    data = pd.read_parquet(ABSOLUTE_PATH, engine="fastparquet")
+    data = data.sort_values(by="cell_type").reset_index(drop=True)
+    data["index1"] = data.index
+    # gene expression data for each cell
+    single_cell_vectors = data.iloc[:, 5:18216].to_numpy()
+    embedding = TSNE(n_components=2, metric=metric, perplexity=perplexity).fit_transform(single_cell_vectors)
+    print(embedding.shape)
+    # plot TSNE embedding colored by cell type
+    plt.scatter(
+        embedding[:, 0],
+        embedding[:, 1],
+        c=[
+            sns.color_palette("Dark2")[int(x)]
+            for x in data.cell_type.map(
+                {
+                    "NK cells": 5,
+                    "T cells CD4+": 4,
+                    "T cells CD8+": 3,
+                    "T regulatory cells": 2,
+                    "B cells": 1,
+                    "Myeloid cells": 0,
+                }
+            )
+        ],
+    )
+
+    # draw arrows pointing to b cells and myeloid cells from other cell types
+    if arrows:
+        arrows(data, ebedding)
+
+    plt.show()
+
+
 if __name__ == "__main__":
-    observe_data()
+    """
+    Data Visualization so far. Uncomment the lines of code to use.
+
+    Note that with the heatmaps, the tick marks aren't very useful when they are there,
+    because there are too many. Instead, it's easier just to see if there's a general 
+    pattern, like if certain cell types are correlated with others.
+
+    My umap and tsne functions have an "arrow" boolean parameter, which will draw
+    arrows between T and NK cells to Myeloid and B cells if arrow is True. Right now
+    it's not helping, it just clutters things. Maybe some formatting would help.
+    """
+
+
+    """
+    Heatmap for seeing if there are correlations between cell types (single cell heatmap)
+    """
+    # cell_correlation_heatmaps(sortby="cell_type")
+
+
+    """
+    Heatmap for seeing if there are correlations between compounds (single cell heatmap)
+    """
+    # cell_correlation_heatmaps(sortby="sm_name")
+
+
+    """
+    Heatmap for seeing if there are correlations between genes (single gene heatmap)
+    """
+    # gene_correlation_heatmaps()
+
+
+    """
+    UMAP across cells, cell types colored
+    Cosine and correlation metrics seem to work better
+    """
+    # umap_cells(metric="cosine")
+
+
+    """
+    t-SNE across cells, cell types colored
+    Cosine and braycurtis metrics seem to work better
+    """
+    # tsne_cells(metric="mahalanobis", perplexity=30)
