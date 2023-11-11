@@ -6,9 +6,11 @@ from torch_geometric.data import Data, Batch
 import torch
 from torch.utils.data import Dataset, DataLoader
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 import seaborn as sns
 import umap
 from sklearn.manifold import TSNE
+from sklearn.decomposition import KernelPCA
 
 MAX_TOKENS = 121
 PAD_TOKEN = 33
@@ -339,6 +341,43 @@ def gene_correlation_heatmaps(BASE_PATH="data/de_train.parquet"):
     plt.show()
 
 
+def get_cell_data(BASE_PATH="data/de_train.parquet"):
+    ABSOLUTE_PATH = os.path.join(os.path.dirname(__file__), BASE_PATH)
+    data = pd.read_parquet(ABSOLUTE_PATH, engine="fastparquet")
+    data = data.sort_values(by="cell_type").reset_index(drop=True)
+    data["index1"] = data.index
+    # gene expression data for each cell
+    single_cell_vectors = data.iloc[:, 5:18216].to_numpy()
+    return data, single_cell_vectors
+
+
+def get_handles(palette=sns.color_palette("Dark2")):
+    labels = ["Myeloid cells", "B cells", "T regulatory cells", "T cells CD8+", "T cells CD4+", "NK cells"]
+    handles = [Line2D([], [], color=palette[idx], marker='.', linestyle='None',
+                markersize=10, label=label) for idx, label in enumerate(labels)]
+    return handles
+
+
+def plot_cell_types_colored(data, embedding, palette=sns.color_palette("Dark2")):
+    plt.scatter(
+        embedding[:, 0],
+        embedding[:, 1],
+        c=[
+            sns.color_palette("Dark2")[int(x)]
+            for x in data.cell_type.map(
+                {
+                    "NK cells": 5,
+                    "T cells CD4+": 4,
+                    "T cells CD8+": 3,
+                    "T regulatory cells": 2,
+                    "B cells": 1,
+                    "Myeloid cells": 0,
+                }
+            )
+        ],
+    )
+
+
 def arrows(data, embedding):
     # iterating through b cells
     bcell_rows = data.loc[data["cell_type"] == "B cells"]
@@ -368,73 +407,51 @@ def arrows(data, embedding):
 
 
 def umap_cells(metric, BASE_PATH="data/de_train.parquet", arrows=False):
-    ABSOLUTE_PATH = os.path.join(os.path.dirname(__file__), BASE_PATH)
-    data = pd.read_parquet(ABSOLUTE_PATH, engine="fastparquet")
-    data = data.sort_values(by="cell_type").reset_index(drop=True)
-    data["index1"] = data.index
-    # gene expression data for each cell
-    single_cell_vectors = data.iloc[:, 5:18216].to_numpy()
+    data, single_cell_vectors = get_cell_data()
     embedding = umap.UMAP(n_components=2, metric=metric).fit_transform(single_cell_vectors)
     # plot UMAP embedding colored by cell type
-    plt.scatter(
-        embedding[:, 0],
-        embedding[:, 1],
-        c=[
-            sns.color_palette("Dark2")[int(x)]
-            for x in data.cell_type.map(
-                {
-                    "NK cells": 5,
-                    "T cells CD4+": 4,
-                    "T cells CD8+": 3,
-                    "T regulatory cells": 2,
-                    "B cells": 1,
-                    "Myeloid cells": 0,
-                }
-            )
-        ],
-    )
+    plot_cell_types_colored(data, embedding)
 
     # draw arrows pointing to b cells and myeloid cells from other cell types
     if arrows:
         arrows(data, embedding)
 
-    #plt.savefig(f"visuals/cells_umap_{metric}.png", bbox_inches="tight", dpi=400)
-    plt.show()
+    plt.legend(handles=get_handles())
+    plt.title(f"UMAP Across Cells, {metric} metric")
+    plt.savefig(f"visuals/cells_umap_{metric}.png", bbox_inches="tight", dpi=400)
+    #plt.show()
 
 
 def tsne_cells(metric, perplexity=30, BASE_PATH="data/de_train.parquet", arrows=False):
-    ABSOLUTE_PATH = os.path.join(os.path.dirname(__file__), BASE_PATH)
-    data = pd.read_parquet(ABSOLUTE_PATH, engine="fastparquet")
-    data = data.sort_values(by="cell_type").reset_index(drop=True)
-    data["index1"] = data.index
-    # gene expression data for each cell
-    single_cell_vectors = data.iloc[:, 5:18216].to_numpy()
+    data, single_cell_vectors = get_cell_data()
     embedding = TSNE(n_components=2, metric=metric, perplexity=perplexity).fit_transform(single_cell_vectors)
     # plot TSNE embedding colored by cell type
-    plt.scatter(
-        embedding[:, 0],
-        embedding[:, 1],
-        c=[
-            sns.color_palette("Dark2")[int(x)]
-            for x in data.cell_type.map(
-                {
-                    "NK cells": 5,
-                    "T cells CD4+": 4,
-                    "T cells CD8+": 3,
-                    "T regulatory cells": 2,
-                    "B cells": 1,
-                    "Myeloid cells": 0,
-                }
-            )
-        ],
-    )
+    plot_cell_types_colored(data, embedding)
 
     # draw arrows pointing to b cells and myeloid cells from other cell types
     if arrows:
         arrows(data, embedding)
 
-    # plt.savefig(f"visuals/cells_tsne_{metric}.png", bbox_inches="tight", dpi=400)
-    plt.show()
+    plt.legend(handles=get_handles())
+    plt.title(f"t-SNE Across Cells, {metric} metric, {perplexity} perplex.")
+    plt.savefig(f"visuals/cells_tsne_{metric}.png", bbox_inches="tight", dpi=400)
+    #plt.show()
+
+
+def kernel_pca_cells(kernel="rbf" ,BASE_PATH="data/de_train.parquet", arrows=False):
+    data, single_cell_vectors = get_cell_data()
+    embedding = KernelPCA(n_components=2, kernel=kernel).fit_transform(single_cell_vectors)
+    # plot kernel pca embedding colored by cell type
+    plot_cell_types_colored(data, embedding)
+
+    # draw arrows pointing to b cells and myeloid cells from other cell types
+    if arrows:
+        arrows(data, embedding)
+
+    plt.legend(handles=get_handles())
+    plt.title(f"{kernel} PCA Across Cells")
+    plt.savefig(f"visuals/cells_{kernel}_pca.png", bbox_inches="tight", dpi=400)
+    #plt.show() 
 
 
 if __name__ == "__main__":
@@ -473,7 +490,7 @@ if __name__ == "__main__":
     UMAP across cells, cell types colored
     Cosine and correlation metrics seem to work better
     """
-    # umap_cells(metric="correlation")
+    # umap_cells(metric="cosine")
 
 
     """
@@ -481,3 +498,9 @@ if __name__ == "__main__":
     Cosine metric seem to work better
     """
     # tsne_cells(metric="cosine", perplexity=30)
+    
+
+    """
+    Kernel PCA across cells, cell types colored
+    """
+    # kernel_pca_cells(kernel="rbf")
