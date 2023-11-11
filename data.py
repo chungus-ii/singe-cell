@@ -315,10 +315,12 @@ def cell_correlation_heatmaps(BASE_PATH="data/de_train.parquet", sortby="cell_ty
     mask[np.triu_indices_from(mask)] = True
     sns.heatmap(corr_df, mask=mask, square=True)
     sns.set(font_scale=0.1)
+    #plt.savefig(f"visuals/cells_corr_heatmap_({sortby}).png", bbox_inches="tight", dpi=400)
     plt.show()
 
 
 def gene_correlation_heatmaps(BASE_PATH="data/de_train.parquet"):
+    print("right place")
     ABSOLUTE_PATH = os.path.join(os.path.dirname(__file__), BASE_PATH)
     data = pd.read_parquet(ABSOLUTE_PATH, engine="fastparquet")
     # each vector representing an individual gene
@@ -333,7 +335,7 @@ def gene_correlation_heatmaps(BASE_PATH="data/de_train.parquet"):
     mask = np.zeros_like(corr_mat, dtype=bool)
     mask[np.triu_indices_from(mask)] = True
     sns.heatmap(corr_mat, mask=mask, square=True, xticklabels=False, yticklabels=False)
-    sns.set(font_scale=0.1)
+    plt.savefig("visuals/genes_heatmap.png", bbox_inches="tight", dpi=400)
     plt.show()
 
 
@@ -394,8 +396,9 @@ def umap_cells(metric, BASE_PATH="data/de_train.parquet", arrows=False):
 
     # draw arrows pointing to b cells and myeloid cells from other cell types
     if arrows:
-        arrows(data, ebedding)
+        arrows(data, embedding)
 
+    #plt.savefig(f"visuals/cells_umap_{metric}.png", bbox_inches="tight", dpi=400)
     plt.show()
 
 
@@ -407,7 +410,6 @@ def tsne_cells(metric, perplexity=30, BASE_PATH="data/de_train.parquet", arrows=
     # gene expression data for each cell
     single_cell_vectors = data.iloc[:, 5:18216].to_numpy()
     embedding = TSNE(n_components=2, metric=metric, perplexity=perplexity).fit_transform(single_cell_vectors)
-    print(embedding.shape)
     # plot TSNE embedding colored by cell type
     plt.scatter(
         embedding[:, 0],
@@ -429,8 +431,9 @@ def tsne_cells(metric, perplexity=30, BASE_PATH="data/de_train.parquet", arrows=
 
     # draw arrows pointing to b cells and myeloid cells from other cell types
     if arrows:
-        arrows(data, ebedding)
+        arrows(data, embedding)
 
+    # plt.savefig(f"visuals/cells_tsne_{metric}.png", bbox_inches="tight", dpi=400)
     plt.show()
 
 
@@ -470,11 +473,11 @@ if __name__ == "__main__":
     UMAP across cells, cell types colored
     Cosine and correlation metrics seem to work better
     """
-    # umap_cells(metric="cosine")
+    # umap_cells(metric="correlation")
 
 
     """
     t-SNE across cells, cell types colored
-    Cosine and braycurtis metrics seem to work better
+    Cosine metric seem to work better
     """
-    # tsne_cells(metric="mahalanobis", perplexity=30)
+    # tsne_cells(metric="cosine", perplexity=30)
