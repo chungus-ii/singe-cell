@@ -59,6 +59,19 @@ class CompoundEncoderDataset(Dataset):
         return self.data[idx]
 
 
+class AutoencoderDataset(Dataset):
+    def __init__(self, BASE_PATH="data/de_train.parquet", device=torch.device("mps")):
+        ABSOLUTE_PATH = os.path.join(os.path.dirname(__file__), BASE_PATH)
+        data = pd.read_parquet(ABSOLUTE_PATH, engine="fastparquet")
+        self.data = torch.as_tensor(data.iloc[:, 5:18216].to_numpy(dtype="float32"), device=device)
+    
+    def __len__(self):
+        return self.data.shape[0]
+    
+    def __getitem__(self, idx):
+        return self.data[idx]
+
+
 def compound_collate_fn(list_of_tuples):
     """
     Parameters:
@@ -498,9 +511,9 @@ if __name__ == "__main__":
     Cosine metric seem to work better
     """
     # tsne_cells(metric="cosine", perplexity=30)
-    
+
 
     """
     Kernel PCA across cells, cell types colored
     """
-    # kernel_pca_cells(kernel="rbf")
+    kernel_pca_cells(kernel="rbf")

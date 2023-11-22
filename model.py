@@ -6,6 +6,54 @@ from torch_geometric.nn import GINEConv, global_add_pool
 PAD_TOKEN = 33
 MAX_TOKENS = 121
 
+
+class Autoencoder(torch.nn.Module):
+    def __init__(self):
+        super(Autoencoder, self).__init__()
+        self.encoder = nn.Sequential(
+            ResidualBlock(18211, 512),
+            ResidualBlock(512, 256),
+            ResidualBlock(256, 256),
+            nn.Linear(256, 128)
+        )
+
+        self.decoder = nn.Sequential(
+            ResidualBlock(128, 256),
+            ResidualBlock(256, 256),
+            ResidualBlock(256, 512),
+            nn.Linear(512, 18211),
+        )
+
+    def encode(self, x):
+        return self.encoder(x)
+
+    def decode(self, x):
+        return self.decoder(x)
+
+    def forward(self, x):
+        return self.decoder(self.encoder(x))
+
+
+class ResidualBlock(nn.Module):
+    def __init__(self, in_features, out_features, activation=nn.ReLU()):
+        super(ResidualBlock, self).__init__()
+
+        self.block = nn.Sequential(
+            nn.Linear(in_features, out_features),
+            nn.BatchNorm1d(out_features),
+            activation,
+            nn.Linear(out_features, out_features),
+            nn.BatchNorm1d(out_features)
+        )
+
+        self.activation = activation
+        self.projection = nn.Linear(in_features, out_features)
+
+    def forward(self, x):
+        return self.projection(x) + self.block(x)
+
+
+
 class GIN(torch.nn.Module):
     def __init__(self, dim_h):
         super(GIN, self).__init__()

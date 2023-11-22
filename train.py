@@ -5,15 +5,17 @@ import pandas as pd
 import numpy as np
 import datetime, os
 
-from data import CompoundEncoderDataset, compound_collate_fn
-from model import GIN, TextModel
+from data import CompoundEncoderDataset, compound_collate_fn, AutoencoderDataset
+from model import GIN, TextModel, Autoencoder
 
 # Metal Performance Shaders: I'm using a macbook, change this to cuda if you run it yourself
 device = torch.device("mps")
 
-lr = 5e-4
-batch_size = 146
-epochs = 1000
+# Tip from forum: Use MAE instead of MSE
+
+lr = 1e-3
+batch_size = 614
+epochs = 5000
 submitting = True
 
 PAD_TOKEN = 33
@@ -23,6 +25,35 @@ SEQ_LENGTH = 121
 def init_weights(m):
     if type(m) == nn.Linear:
         nn.init.xavier_uniform_(m.weight)
+
+
+def train_autoencoder():
+    dataset = AutoencoderDataset(device=device)
+    dataloader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=True
+    )
+    model = Autoencoder().to(device)
+    model.apply(init_weights)
+    weights = model.state_dict()
+
+    criterion = nn.MSELoss()
+    optimizer = torch.optim.AdamW(model.parameters(), lr)
+
+    for epoch in range(epochs):
+        train_loss = 0
+        count = 0
+        for batch_idx, x in enumerate(dataloader):
+            optimizer.zero_grad()
+            output = model(x)
+            loss = criterion(output, x)
+            loss.backward()
+            optimizer.step()
+            train_loss += loss.item()
+            count += 1
+        train_loss /= count
+        print(epoch, train_loss)
 
 
 # Not implemented yet, just the dataset, dataloader, and training loop set up
@@ -166,4 +197,4 @@ def train():
 
 
 if __name__ == "__main__":
-    train_compound_encoder()
+    train_autoencoder()
