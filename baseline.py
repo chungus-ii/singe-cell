@@ -22,8 +22,6 @@ def unweighted_average(DATA_PATH="data/de_train.parquet", ID_PATH="data/id_map.c
     results.columns = columns
     results.index.name = "id"
     results.to_csv(SUBMISSION_PATH)
-    FILE_PATH = "submissions/submission_{date:%Y-%m-%d_%H:%M:%S}.csv".format(date=datetime.datetime.now())
-    ABSOLUTE_DATA_PATH = os.path.join(os.path.dirname(__file__), DATA_PATH)
 
 
 """
@@ -149,5 +147,5 @@ def make_predictions(m_model, b_model, FILE_PATH, DATA_PATH="data/de_train.parqu
 
 if __name__ == "__main__":
     # Average Model: 0.627
-    m_model, b_model = train_2_models(model=ScalarWeights, epochs=1500, lr=6e-2, device=torch.device("mps"))
-    make_predictions(m_model, b_model, FILE_PATH="submissions/MAE_scalar_w_baseline_submission.csv")
+    m_model, b_model = train_2_models(model=WeightedSum, epochs=1500, lr=6e-2, device=torch.device("mps"))
+    make_predictions(m_model, b_model, FILE_PATH="submissions/MAE_w_sum_baseline_submission.csv")
