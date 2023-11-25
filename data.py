@@ -63,11 +63,13 @@ class AutoencoderDataset(Dataset):
     def __init__(self, BASE_PATH="data/de_train.parquet", device=torch.device("mps")):
         ABSOLUTE_PATH = os.path.join(os.path.dirname(__file__), BASE_PATH)
         data = pd.read_parquet(ABSOLUTE_PATH, engine="fastparquet")
-        self.data = torch.as_tensor(data.iloc[:, 5:18216].to_numpy(dtype="float32"), device=device)
-    
+        self.data = torch.as_tensor(
+            data.iloc[:, 5:18216].to_numpy(dtype="float32"), device=device
+        )
+
     def __len__(self):
         return self.data.shape[0]
-    
+
     def __getitem__(self, idx):
         return self.data[idx]
 
@@ -330,7 +332,7 @@ def cell_correlation_heatmaps(BASE_PATH="data/de_train.parquet", sortby="cell_ty
     mask[np.triu_indices_from(mask)] = True
     sns.heatmap(corr_df, mask=mask, square=True)
     sns.set(font_scale=0.1)
-    #plt.savefig(f"visuals/cells_corr_heatmap_({sortby}).png", bbox_inches="tight", dpi=400)
+    # plt.savefig(f"visuals/cells_corr_heatmap_({sortby}).png", bbox_inches="tight", dpi=400)
     plt.show()
 
 
@@ -365,9 +367,26 @@ def get_cell_data(BASE_PATH="data/de_train.parquet"):
 
 
 def get_handles(palette=sns.color_palette("Dark2")):
-    labels = ["Myeloid cells", "B cells", "T regulatory cells", "T cells CD8+", "T cells CD4+", "NK cells"]
-    handles = [Line2D([], [], color=palette[idx], marker='.', linestyle='None',
-                markersize=10, label=label) for idx, label in enumerate(labels)]
+    labels = [
+        "Myeloid cells",
+        "B cells",
+        "T regulatory cells",
+        "T cells CD8+",
+        "T cells CD4+",
+        "NK cells",
+    ]
+    handles = [
+        Line2D(
+            [],
+            [],
+            color=palette[idx],
+            marker=".",
+            linestyle="None",
+            markersize=10,
+            label=label,
+        )
+        for idx, label in enumerate(labels)
+    ]
     return handles
 
 
@@ -421,7 +440,9 @@ def arrows(data, embedding):
 
 def umap_cells(metric, BASE_PATH="data/de_train.parquet", arrows=False):
     data, single_cell_vectors = get_cell_data()
-    embedding = umap.UMAP(n_components=2, metric=metric).fit_transform(single_cell_vectors)
+    embedding = umap.UMAP(n_components=2, metric=metric).fit_transform(
+        single_cell_vectors
+    )
     # plot UMAP embedding colored by cell type
     plot_cell_types_colored(data, embedding)
 
@@ -432,12 +453,14 @@ def umap_cells(metric, BASE_PATH="data/de_train.parquet", arrows=False):
     plt.legend(handles=get_handles())
     plt.title(f"UMAP Across Cells, {metric} metric")
     plt.savefig(f"visuals/cells_umap_{metric}.png", bbox_inches="tight", dpi=400)
-    #plt.show()
+    # plt.show()
 
 
 def tsne_cells(metric, perplexity=30, BASE_PATH="data/de_train.parquet", arrows=False):
     data, single_cell_vectors = get_cell_data()
-    embedding = TSNE(n_components=2, metric=metric, perplexity=perplexity).fit_transform(single_cell_vectors)
+    embedding = TSNE(
+        n_components=2, metric=metric, perplexity=perplexity
+    ).fit_transform(single_cell_vectors)
     # plot TSNE embedding colored by cell type
     plot_cell_types_colored(data, embedding)
 
@@ -448,12 +471,14 @@ def tsne_cells(metric, perplexity=30, BASE_PATH="data/de_train.parquet", arrows=
     plt.legend(handles=get_handles())
     plt.title(f"t-SNE Across Cells, {metric} metric, {perplexity} perplex.")
     plt.savefig(f"visuals/cells_tsne_{metric}.png", bbox_inches="tight", dpi=400)
-    #plt.show()
+    # plt.show()
 
 
-def kernel_pca_cells(kernel="rbf" ,BASE_PATH="data/de_train.parquet", arrows=False):
+def kernel_pca_cells(kernel="rbf", BASE_PATH="data/de_train.parquet", arrows=False):
     data, single_cell_vectors = get_cell_data()
-    embedding = KernelPCA(n_components=2, kernel=kernel).fit_transform(single_cell_vectors)
+    embedding = KernelPCA(n_components=2, kernel=kernel).fit_transform(
+        single_cell_vectors
+    )
     # plot kernel pca embedding colored by cell type
     plot_cell_types_colored(data, embedding)
 
@@ -464,7 +489,7 @@ def kernel_pca_cells(kernel="rbf" ,BASE_PATH="data/de_train.parquet", arrows=Fal
     plt.legend(handles=get_handles())
     plt.title(f"{kernel} PCA Across Cells")
     plt.savefig(f"visuals/cells_{kernel}_pca.png", bbox_inches="tight", dpi=400)
-    #plt.show() 
+    # plt.show()
 
 
 if __name__ == "__main__":
@@ -472,7 +497,7 @@ if __name__ == "__main__":
     Data Visualization so far. Uncomment the lines of code to use.
 
     Note that with the heatmaps, the tick marks aren't very useful when they are there,
-    because there are too many. Instead, it's easier just to see if there's a general 
+    because there are too many. Instead, it's easier just to see if there's a general
     pattern, like if certain cell types are correlated with others.
 
     My umap and tsne functions have an "arrow" boolean parameter, which will draw
@@ -480,24 +505,20 @@ if __name__ == "__main__":
     it's not helping, it just clutters things. Maybe some formatting would help.
     """
 
-
     """
     Heatmap for seeing if there are correlations between cell types (single cell heatmap)
     """
     # cell_correlation_heatmaps(sortby="cell_type")
-
 
     """
     Heatmap for seeing if there are correlations between compounds (single cell heatmap)
     """
     # cell_correlation_heatmaps(sortby="sm_name")
 
-
     """
     Heatmap for seeing if there are correlations between genes (single gene heatmap)
     """
     # gene_correlation_heatmaps()
-
 
     """
     UMAP across cells, cell types colored
@@ -505,13 +526,11 @@ if __name__ == "__main__":
     """
     # umap_cells(metric="cosine")
 
-
     """
     t-SNE across cells, cell types colored
     Cosine metric seem to work better
     """
     # tsne_cells(metric="cosine", perplexity=30)
-
 
     """
     Kernel PCA across cells, cell types colored

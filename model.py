@@ -14,7 +14,7 @@ class Autoencoder(torch.nn.Module):
             ResidualBlock(18211, 512),
             ResidualBlock(512, 256),
             ResidualBlock(256, 256),
-            nn.Linear(256, 128)
+            nn.Linear(256, 128),
         )
 
         self.decoder = nn.Sequential(
@@ -43,7 +43,7 @@ class ResidualBlock(nn.Module):
             nn.BatchNorm1d(out_features),
             activation,
             nn.Linear(out_features, out_features),
-            nn.BatchNorm1d(out_features)
+            nn.BatchNorm1d(out_features),
         )
 
         self.activation = activation
@@ -51,7 +51,6 @@ class ResidualBlock(nn.Module):
 
     def forward(self, x):
         return self.projection(x) + self.block(x)
-
 
 
 class GIN(torch.nn.Module):
@@ -196,7 +195,7 @@ class Block(nn.Module):
         self.mlp = nn.Sequential(
             nn.Linear(embed_dim, 4 * embed_dim),
             nn.ReLU(),
-            nn.Linear(4 * embed_dim, embed_dim)
+            nn.Linear(4 * embed_dim, embed_dim),
         )
         self.norm1 = nn.LayerNorm(embed_dim)
         self.norm2 = nn.LayerNorm(embed_dim)
@@ -208,21 +207,30 @@ class Block(nn.Module):
 
 
 class TextModel(nn.Module):
-    def __init__(self, vocab_size, embed_dim, num_heads, num_layers, output_dim, seq_len=MAX_TOKENS):
+    def __init__(
+        self,
+        vocab_size,
+        embed_dim,
+        num_heads,
+        num_layers,
+        output_dim,
+        seq_len=MAX_TOKENS,
+    ):
         super(TextModel, self).__init__()
         self.embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=PAD_TOKEN)
         self.blocks = [Block(embed_dim, num_heads) for _ in range(num_layers)]
         self.norm = nn.LayerNorm(embed_dim)
-        self.linear = nn.Linear(seq_len*embed_dim, output_dim)
+        self.linear = nn.Linear(seq_len * embed_dim, output_dim)
 
     def forward(self, tokens, mask):
         x = self.embedding(tokens)
         batch_size, seq_len, embed_dim = x.shape
         for block in self.blocks:
             x = block(x, mask)
-        x = self.norm(x).view(batch_size, seq_len*embed_dim)
+        x = self.norm(x).view(batch_size, seq_len * embed_dim)
         x = self.linear(x)
         return x
+
 
 if __name__ == "__main__":
     model = OutputModel(example_args_dict)
